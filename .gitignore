@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+# Les données d'usage vivent dans ~/.claude/tableau-usage, jamais ici.
+*.jsonl
+donnees-*.json
+tableau.html
+cache.json
