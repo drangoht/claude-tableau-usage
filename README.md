@@ -8,6 +8,25 @@ Tout est calculé sur votre poste par un script Python, **sans aucun appel au mo
 consomme pas de tokens. La page produite est un seul fichier HTML autonome, lisible hors ligne, en thème clair ou
 sombre selon le système.
 
+## Aperçu
+
+Les captures ci-dessous sont faites sur des données fictives (`scripts/demo.py`).
+
+Vue en tokens, thème clair :
+
+![Tableau de bord en tokens : tuiles de synthèse, tokens par jour, modèles, dépôts et dossiers](docs/tableau-tokens.png)
+
+Vue en euros, thème sombre :
+
+![Tableau de bord en euros : coût estimé par jour, par modèle, par dépôt et par dossier](docs/tableau-euros.png)
+
+Page entière, avec skills, agents, commandes, outils, hooks et table des sessions :
+
+![Page entière du tableau de bord](docs/tableau-detail.png)
+
+Pour essayer la page avant d'installer quoi que ce soit, `python scripts/demo.py` écrit un `demo.html` rempli de
+données fictives, sans lire vos transcripts.
+
 ## Ce que contient le dépôt
 
 | Fichier | Rôle |
@@ -16,6 +35,7 @@ sombre selon le système.
 | `scripts/journal.py` | Hook de journalisation : note chaque skill, sous-agent, commande et session, puis relance la collecte |
 | `scripts/installer.py` | Pose (ou retire) les hooks dans `~/.claude/settings.json` |
 | `scripts/gabarit.html` | Gabarit de la page (graphiques en SVG, aucun fichier externe) |
+| `scripts/demo.py` | Page de démonstration sur données fictives (sert aux captures de ce README) |
 | `tarifs.json` | Tarifs de l'API par modèle et taux de change, pour l'estimation en euros |
 | `SKILL.md` | Skill `/tableau-usage`, réglé sur le modèle Haiku |
 
@@ -62,6 +82,8 @@ python "$HOME/.claude/skills/tableau-usage/scripts/collecte.py" --ouvrir
 
 Options de `collecte.py` : `--ouvrir` (ouvre la page), `--complet` (ignore le cache et relit tout),
 `--silencieux` (aucune sortie).
+
+L'état initial peut être donné dans l'adresse, par exemple `tableau.html#unite=1&periode=90&cache=1`.
 
 Dans la page : filtre de période (7, 30, 90 jours, tout), bascule « Tokens / Euros », bascule « avec ou sans lecture
 de cache », survol des graphiques pour le détail, clic sur une barre pour filtrer la table des sessions, tri par

@@ -369,6 +369,8 @@ if (D.postes.length > 1) { const s = $("poste"); s.hidden = false;
 document.querySelectorAll(".segments button").forEach(b => b.addEventListener("click", () => { etat[b.parentNode.id] = +b.dataset.v; etat.limite = 50; rendre(); }));
 $("recherche").addEventListener("input", e => { etat.recherche = e.target.value; etat.limite = 50; table(courant); });
 $("plus").addEventListener("click", () => { etat.limite += 100; table(courant); });
+// État initial depuis l'adresse, par exemple tableau.html#unite=1&periode=90&cache=1
+new URLSearchParams(location.hash.slice(1)).forEach((v, k) => { if (["periode", "cache", "unite"].includes(k) && /^\d+$/.test(v)) etat[k] = +v; });
 let minuteur; addEventListener("resize", () => { clearTimeout(minuteur); minuteur = setTimeout(() => graphe(courant), 150); });
 rendre();
 </script>
