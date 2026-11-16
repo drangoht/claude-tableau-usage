@@ -20,6 +20,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--plan); color: var(--encre);
   font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
 main { max-width: 1320px; margin: 0 auto; padding: 24px 16px 48px; }
@@ -90,6 +91,9 @@ footer { color: var(--discret); font-size: 12px; margin-top: 24px; }
       <div class="segments" id="periode" role="group" aria-label="Période">
         <button data-v="7">7 j</button><button data-v="30">30 j</button><button data-v="90">90 j</button><button data-v="0">Tout</button>
       </div>
+      <div class="segments" id="unite" role="group" aria-label="Unité">
+        <button data-v="0">Tokens</button><button data-v="1" title="Estimation au tarif public de l'API">Euros</button>
+      </div>
       <div class="segments" id="cache" role="group" aria-label="Lecture de cache">
         <button data-v="0" title="Entrée + sortie + écriture de cache">Hors cache lu</button><button data-v="1" title="Ajoute les tokens relus depuis le cache">Avec cache lu</button>
       </div>
@@ -100,16 +104,16 @@ footer { color: var(--discret); font-size: 12px; margin-top: 24px; }
 
   <section class="grille">
     <div class="carte large">
-      <h2>Tokens par <span id="pas">jour</span></h2>
+      <h2><span class="u">Tokens</span> par <span id="pas">jour</span></h2>
       <p class="sous" id="sous-jours"></p>
       <div class="legende" id="legende"></div>
       <div id="graphe"></div>
       <details><summary>Voir les valeurs</summary><div class="defile" id="table-jours"></div></details>
     </div>
-    <div class="carte"><h2>Modèles</h2><p class="sous">Tokens par modèle</p><div id="modeles"></div></div>
-    <div class="carte"><h2>Dépôts</h2><p class="sous">Tokens par dépôt git</p><div id="depots"></div></div>
-    <div class="carte"><h2>Dossiers</h2><p class="sous">Tokens par dossier de travail</p><div id="dossiers"></div></div>
-    <div class="carte"><h2>Skills</h2><p class="sous">Tokens attribués à chaque skill, et nombre de chargements</p><div id="skills"></div></div>
+    <div class="carte"><h2>Modèles</h2><p class="sous"><span class="u">Tokens</span> par modèle</p><div id="modeles"></div></div>
+    <div class="carte"><h2>Dépôts</h2><p class="sous"><span class="u">Tokens</span> par dépôt git</p><div id="depots"></div></div>
+    <div class="carte"><h2>Dossiers</h2><p class="sous"><span class="u">Tokens</span> par dossier de travail</p><div id="dossiers"></div></div>
+    <div class="carte"><h2>Skills</h2><p class="sous"><span class="u">Tokens</span> attribués à chaque skill, et nombre de chargements</p><div id="skills"></div></div>
     <div class="carte"><h2>Agents</h2><p class="sous">Sous-agents lancés, et tokens qu'ils ont consommés</p><div id="agents"></div></div>
     <div class="carte"><h2>Commandes</h2><p class="sous">Commandes « / » tapées (skills compris)</p><div id="commandes"></div></div>
     <div class="carte moitie"><h2>Outils</h2><p class="sous">Appels d'outils</p><div id="outils"></div></div>
@@ -126,7 +130,7 @@ footer { color: var(--discret); font-size: 12px; margin-top: 24px; }
       <button class="plus" id="plus" hidden>Afficher plus</button>
     </div>
   </section>
-  <footer>Généré localement à partir de ~/.claude/projects, sans appel au modèle. Les compteurs de skills, agents, outils et hooks portent sur les sessions actives pendant la période.</footer>
+  <footer>Généré localement à partir de ~/.claude/projects, sans appel au modèle. Les compteurs de skills, agents, outils et hooks portent sur les sessions actives pendant la période. <span id="note-tarifs"></span></footer>
 </main>
 <div id="bulle" role="status"></div>
 <script id="donnees" type="application/json">__DONNEES__</script>
@@ -139,7 +143,7 @@ const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&am
 const SERIES = [
   { i: 1, nom: "Sortie", c: "var(--s1)" }, { i: 0, nom: "Entrée", c: "var(--s2)" },
   { i: 3, nom: "Cache écrit", c: "var(--s3)" }, { i: 2, nom: "Cache lu", c: "var(--s4)" }];
-const etat = { periode: 30, cache: 0, poste: "", tri: "fin", sens: -1, recherche: "", limite: 50 };
+const etat = { periode: 30, cache: 0, unite: 0, poste: "", tri: "fin", sens: -1, recherche: "", limite: 50 };
 const SESSIONS = D.postes.flatMap(p => p.sessions);
 
 function nb(n) {
@@ -149,8 +153,27 @@ function nb(n) {
   if (a >= 1e4) return f(n / 1e3, "k");
   return Math.round(n).toLocaleString("fr-FR");
 }
-const mesure = v => v[0] + v[1] + v[3] + (etat.cache ? v[2] : 0);
-const series = () => SERIES.filter(s => etat.cache || s.i !== 2);
+// Vecteur agrégé : 4 composantes en tokens puis les 4 mêmes en euros (tarif public de l'API).
+const T = D.tarifs || { modeles: {} }, inconnus = new Set(), memoPrix = {};
+function prix(m) {
+  if (!m) return null;
+  if (!(m in memoPrix)) { const k = Object.keys(T.modeles).filter(p => m.startsWith(p)).sort((a, b) => b.length - a.length)[0]; memoPrix[m] = k ? T.modeles[k] : null; if (!k) inconnus.add(m); }
+  return memoPrix[m];
+}
+function etendre(m, v) {
+  const p = prix(m) || { entree: 0, sortie: 0, cache_lu: 0 }, k = 1 / 1e6 / (T.usd_par_eur || 1), h = v[4] || 0;
+  return [v[0], v[1], v[2], v[3], v[0] * p.entree * k, v[1] * p.sortie * k, v[2] * p.cache_lu * k,
+    ((v[3] - h) * (T.cache_ecrit_5m_x_entree || 1.25) + h * (T.cache_ecrit_1h_x_entree || 2)) * p.entree * k];
+}
+const Z = () => [0, 0, 0, 0, 0, 0, 0, 0];
+const tok = v => v[0] + v[1] + v[3] + (etat.cache ? v[2] : 0);
+const cout = v => v[4] + v[5] + v[6] + v[7];
+const mesure = v => etat.unite ? cout(v) : tok(v);
+const dec = () => etat.unite ? 4 : 0;
+const eur = n => n.toLocaleString("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: Math.abs(n) >= 100 ? 0 : 2 });
+const fv = n => etat.unite ? eur(n) : nb(n);
+const exact = n => etat.unite ? eur(n) : n.toLocaleString("fr-FR");
+const series = () => SERIES.filter(s => etat.unite || etat.cache || s.i !== 2);
 function modele(m) {
   const p = m.replace(/^claude-/, "").replace(/-\d{8}$/, "").split("-");
   const nom = p.filter(x => !/^\d+$/.test(x)).join(" "), ver = p.filter(x => /^\d+$/.test(x)).join(".");
@@ -161,27 +184,31 @@ const iso = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0
 const deIso = s => new Date(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10));
 const dateCourte = s => deIso(s).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
 function lundi(s) { const d = deIso(s); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return iso(d); }
-function plus(o, k, v) { const c = o[k] || (o[k] = [0, 0, 0, 0]); for (let i = 0; i < 4; i++) c[i] += v[i]; }
-function compte(o, src, tok) {
-  for (const k in src || {}) (o[k] || (o[k] = { n: 0, v: [0, 0, 0, 0] })).n += src[k];
-  for (const k in tok || {}) { const c = o[k] || (o[k] = { n: 0, v: [0, 0, 0, 0] }); for (let i = 0; i < 4; i++) c.v[i] += tok[k][i]; }
+function cumul(c, v) { for (let i = 0; i < 8; i++) c[i] += v[i]; }
+function plus(o, k, v) { cumul(o[k] || (o[k] = Z()), v); }
+function compte(o, src, parModele) {
+  for (const k in src || {}) (o[k] || (o[k] = { n: 0, v: Z() })).n += src[k];
+  for (const k in parModele || {}) {  // clé « nom|modèle »
+    const i = k.lastIndexOf("|"), nom = i < 0 ? k : k.slice(0, i);
+    cumul((o[nom] || (o[nom] = { n: 0, v: Z() })).v, etendre(i < 0 ? "" : k.slice(i + 1), parModele[k]));
+  }
 }
 
 function calcul() {
   const seuil = etat.periode ? iso(new Date(Date.now() - (etat.periode - 1) * 864e5)) : "";
-  const r = { lignes: [], jours: {}, modeles: {}, depots: {}, dossiers: {}, skills: {}, agents: {}, outils: {}, hooks: {}, commandes: {}, tot: [0, 0, 0, 0], seuil };
+  const r = { lignes: [], jours: {}, modeles: {}, depots: {}, dossiers: {}, skills: {}, agents: {}, outils: {}, hooks: {}, commandes: {}, tot: Z(), seuil };
   for (const s of SESSIONS) {
     if (etat.poste && s.machine !== etat.poste) continue;
-    const v = [0, 0, 0, 0], mods = {};
+    const v = Z(), mods = {};
     for (const k in s.jm) {
       const [jour, mod] = k.split("|");
       if (jour < seuil) continue;
-      plus(r.jours, jour, s.jm[k]); plus(mods, mod, s.jm[k]);
-      for (let i = 0; i < 4; i++) v[i] += s.jm[k][i];
+      const w = etendre(mod, s.jm[k]);
+      plus(r.jours, jour, w); plus(mods, mod, w); cumul(v, w);
     }
     if (v[0] + v[1] + v[2] + v[3] === 0) continue;
     for (const m in mods) plus(r.modeles, m, mods[m]);
-    for (let i = 0; i < 4; i++) r.tot[i] += v[i];
+    cumul(r.tot, v);
     plus(r.depots, s.depot || "(hors dépôt)", v); plus(r.dossiers, s.dossier, v);
     compte(r.skills, s.skills, s.tok_skills); compte(r.agents, s.agents, s.tok_agents);
     compte(r.outils, s.outils); compte(r.hooks, s.hooks); compte(r.commandes, s.commandes);
@@ -199,8 +226,8 @@ function montrer(html, e) {
   bulle.style.left = Math.max(8, l) + "px"; bulle.style.top = Math.max(8, t) + "px";
 }
 const cacher = () => { bulle.style.display = "none"; };
-const rangs = v => series().map(s => `<div class="rang"><span><span class="puce" style="background:${s.c}"></span>${s.nom}</span><span>${nb(v[s.i])}</span></div>`).join("")
-  + `<div class="rang"><b>Total</b><b>${nb(mesure(v))}</b></div>`;
+const rangs = v => series().map(s => `<div class="rang"><span><span class="puce" style="background:${s.c}"></span>${s.nom}</span><span>${fv(v[s.i + dec()])}</span></div>`).join("")
+  + `<div class="rang"><b>Total</b><b>${fv(mesure(v))}</b></div>` + (etat.unite ? "" : `<div class="rang"><span>Coût estimé</span><span>${eur(cout(v))}</span></div>`);
 
 // ---- Barres empilées par jour (ou par semaine au-delà de 100 jours)
 function graphe(r) {
@@ -209,25 +236,25 @@ function graphe(r) {
   const fin = iso(new Date()), debut = r.seuil || jours[0], cases = [];
   for (let d = deIso(debut); iso(d) <= fin; d.setDate(d.getDate() + 1)) cases.push(iso(d));
   const hebdo = cases.length > 100, groupes = new Map();
-  for (const j of cases) { const k = hebdo ? lundi(j) : j; if (!groupes.has(k)) groupes.set(k, [0, 0, 0, 0]); if (r.jours[j]) for (let i = 0; i < 4; i++) groupes.get(k)[i] += r.jours[j][i]; }
+  for (const j of cases) { const k = hebdo ? lundi(j) : j; if (!groupes.has(k)) groupes.set(k, Z()); if (r.jours[j]) cumul(groupes.get(k), r.jours[j]); }
   const pts = [...groupes], ser = series();
   $("pas").textContent = hebdo ? "semaine" : "jour";
   $("legende").innerHTML = ser.map(s => `<span><span class="puce" style="background:${s.c}"></span>${s.nom}</span>`).join("");
   const W = Math.max(320, el.clientWidth), H = 260, mg = { g: 52, d: 8, h: 10, b: 24 }, ph = H - mg.h - mg.b;
-  const brut = Math.max(1, ...pts.map(p => mesure(p[1]))), pasY = Math.pow(10, Math.floor(Math.log10(brut)));
+  const d = dec(), brut = Math.max(etat.unite ? .01 : 1, ...pts.map(p => mesure(p[1]))), pasY = Math.pow(10, Math.floor(Math.log10(brut)));
   const palier = [1, 2, 2.5, 5, 10].map(k => k * pasY / 2).find(k => brut / k <= 5) || pasY, max = Math.ceil(brut / palier) * palier;
   const bande = (W - mg.g - mg.d) / pts.length, lb = Math.max(1, Math.min(34, bande > 5 ? bande - 2 : bande * .8));
   let svg = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Tokens par ${hebdo ? "semaine" : "jour"}">`;
   for (let t = 0; t <= max + 1e-9; t += palier) {
     const y = mg.h + ph - t / max * ph;
-    svg += `<line x1="${mg.g}" x2="${W - mg.d}" y1="${y}" y2="${y}" stroke="${t ? "var(--grille)" : "var(--axe)"}"/><text x="${mg.g - 8}" y="${y + 4}" text-anchor="end">${nb(t)}</text>`;
+    svg += `<line x1="${mg.g}" x2="${W - mg.d}" y1="${y}" y2="${y}" stroke="${t ? "var(--grille)" : "var(--axe)"}"/><text x="${mg.g - 8}" y="${y + 4}" text-anchor="end">${fv(t)}</text>`;
   }
   const saut = Math.ceil(pts.length / Math.max(1, Math.floor((W - mg.g) / 64)));
   pts.forEach(([jour, v], n) => {
-    const x = mg.g + n * bande + (bande - lb) / 2, visibles = ser.filter(s => v[s.i] > 0);
+    const x = mg.g + n * bande + (bande - lb) / 2, visibles = ser.filter(s => v[s.i + d] > 0);
     let y = mg.h + ph;
     visibles.forEach((s, k) => {
-      const h = v[s.i] / max * ph, trou = k && h > 3 ? 2 : 0, hh = Math.max(.5, h - trou), y0 = y - h;
+      const h = v[s.i + d] / max * ph, trou = k && h > 3 ? 2 : 0, hh = Math.max(.5, h - trou), y0 = y - h;
       if (k === visibles.length - 1) {
         const ra = Math.min(4, lb / 2, hh);
         svg += `<path fill="${s.c}" d="M${x},${y0 + hh}V${y0 + ra}Q${x},${y0} ${x + ra},${y0}H${x + lb - ra}Q${x + lb},${y0} ${x + lb},${y0 + ra}V${y0 + hh}Z"/>`;
@@ -244,7 +271,7 @@ function graphe(r) {
     z.addEventListener("mouseleave", () => { z.setAttribute("fill", "transparent"); cacher(); });
   });
   $("table-jours").innerHTML = "<table><tr><th>" + (hebdo ? "Semaine du" : "Jour") + "</th>" + ser.map(s => `<th class="n">${s.nom}</th>`).join("") + '<th class="n">Total</th></tr>'
-    + pts.filter(p => mesure(p[1])).reverse().map(([j, v]) => `<tr><td>${dateCourte(j)}</td>` + ser.map(s => `<td class="n">${v[s.i].toLocaleString("fr-FR")}</td>`).join("") + `<td class="n">${mesure(v).toLocaleString("fr-FR")}</td></tr>`).join("") + "</table>";
+    + pts.filter(p => mesure(p[1])).reverse().map(([j, v]) => `<tr><td>${dateCourte(j)}</td>` + ser.map(s => `<td class="n">${exact(v[s.i + d])}</td>`).join("") + `<td class="n">${exact(mesure(v))}</td></tr>`).join("") + "</table>";
 }
 
 // ---- Listes à barres : items = [{nom, libelle, val, aux, bulle}]
@@ -252,8 +279,8 @@ function liste(id, items, max) {
   const el = $(id); items = items.filter(i => i.val > 0).sort((a, b) => b.val - a.val);
   if (!items.length) { el.innerHTML = '<div class="vide">Rien sur la période.</div>'; return; }
   const haut = items[0].val, vus = items.slice(0, max || 8), reste = items.slice(vus.length);
-  el.innerHTML = vus.map((i, n) => `<button class="ligne" data-n="${n}" title="Filtrer les sessions sur « ${esc(i.nom)} »"><span class="nom">${esc(i.libelle || i.nom)}</span><span class="val">${nb(i.val)}${i.aux ? ` <span class="aux">· ${esc(i.aux)}</span>` : ""}</span><span class="piste"><span class="barre" style="width:${i.val / haut * 100}%"></span></span></button>`).join("")
-    + (reste.length ? `<div class="reste">+ ${reste.length} autre${reste.length > 1 ? "s" : ""} (${nb(reste.reduce((a, i) => a + i.val, 0))})</div>` : "");
+  el.innerHTML = vus.map((i, n) => `<button class="ligne" data-n="${n}" title="Filtrer les sessions sur « ${esc(i.nom)} »"><span class="nom">${esc(i.libelle || i.nom)}</span><span class="val">${(i.f || nb)(i.val)}${i.aux ? ` <span class="aux">· ${esc(i.aux)}</span>` : ""}</span><span class="piste"><span class="barre" style="width:${i.val / haut * 100}%"></span></span></button>`).join("")
+    + (reste.length ? `<div class="reste">+ ${reste.length} autre${reste.length > 1 ? "s" : ""} (${(vus[0].f || nb)(reste.reduce((a, i) => a + i.val, 0))})</div>` : "");
   el.querySelectorAll(".ligne").forEach(b => {
     const i = vus[+b.dataset.n];
     b.addEventListener("click", () => { etat.recherche = i.nom; $("recherche").value = i.nom; etat.limite = 50; table(courant); $("sessions").scrollIntoView({ behavior: "smooth", block: "start" }); });
@@ -261,29 +288,29 @@ function liste(id, items, max) {
     b.addEventListener("mouseleave", cacher);
   });
 }
-const parTokens = o => Object.keys(o).map(k => ({ nom: k, val: mesure(o[k]), bulle: rangs(o[k]) }));
-const parAppels = (o, unite) => Object.keys(o).map(k => ({ nom: k, val: o[k].n, aux: mesure(o[k].v) ? nb(mesure(o[k].v)) + " tokens" : "",
+const parTokens = o => Object.keys(o).map(k => ({ nom: k, val: mesure(o[k]), f: fv, bulle: rangs(o[k]) }));
+const parAppels = (o, unite) => Object.keys(o).map(k => ({ nom: k, val: o[k].n, aux: mesure(o[k].v) ? fv(mesure(o[k].v)) + (etat.unite ? "" : " tokens") : "",
   bulle: `<div class="rang"><span>${unite}</span><span>${o[k].n.toLocaleString("fr-FR")}</span></div>` + (mesure(o[k].v) ? rangs(o[k].v) : "") }));
 
 // ---- Table des sessions
 const COLONNES = [
   { k: "fin", t: "Dernière activité", v: l => l.s.fin }, { k: "titre", t: "Session", v: l => l.s.titre.toLowerCase() },
   { k: "depot", t: "Dépôt", v: l => (l.s.depot || "").toLowerCase() }, { k: "modele", t: "Modèle", v: l => l.principal },
-  { k: "tok", t: "Tokens", n: 1, v: l => mesure(l.v) }, { k: "sortie", t: "Sortie", n: 1, v: l => l.v[1] }, { k: "extras", t: "Skills, agents, hooks" }];
+  { k: "tok", t: "Tokens", n: 1, v: l => tok(l.v) }, { k: "cout", t: "Coût estimé", n: 1, v: l => cout(l.v) }, { k: "extras", t: "Skills, agents, hooks" }];
 function table(r) {
   const q = etat.recherche.trim().toLowerCase();
   const texte = l => [l.s.titre, l.s.depot, l.s.dossier, l.s.machine, l.s.branche, l.principal, modele(l.principal), ...Object.keys(l.s.skills || {}), ...Object.keys(l.s.tok_skills || {}),
     ...Object.keys(l.s.agents || {}), ...Object.keys(l.s.hooks || {}), ...Object.keys(l.s.outils || {}), ...Object.keys(l.s.commandes || {})].join(" ").toLowerCase();
   const col = COLONNES.find(c => c.k === etat.tri), lignes = r.lignes.filter(l => !q || texte(l).includes(q))
     .sort((a, b) => { const x = col.v(a), y = col.v(b); return (x < y ? -1 : x > y ? 1 : 0) * etat.sens; });
-  $("sous-sessions").textContent = lignes.length + " session" + (lignes.length > 1 ? "s" : "") + (q ? " correspondant au filtre" : "") + " · " + nb(lignes.reduce((a, l) => a + mesure(l.v), 0)) + " tokens";
+  $("sous-sessions").textContent = lignes.length + " session" + (lignes.length > 1 ? "s" : "") + (q ? " correspondant au filtre" : "") + " · " + nb(lignes.reduce((a, l) => a + tok(l.v), 0)) + " tokens · " + eur(lignes.reduce((a, l) => a + cout(l.v), 0));
   const multi = D.postes.length > 1;
   $("sessions").innerHTML = "<thead><tr>" + COLONNES.map(c => `<th class="${c.n ? "n" : ""}">` + (c.v ? `<button data-k="${c.k}">${c.t}${etat.tri === c.k ? (etat.sens < 0 ? " ↓" : " ↑") : ""}</button>` : c.t) + "</th>").join("") + "</tr></thead><tbody>"
     + lignes.slice(0, etat.limite).map(l => { const s = l.s, d = new Date(s.fin);
       const etiq = [...Object.keys(s.skills || {}).map(k => "skill " + k), ...Object.keys(s.agents || {}).map(k => "agent " + k + " ×" + s.agents[k]), ...Object.keys(s.hooks || {}).filter(k => !k.startsWith("Stop (interne")).map(k => "hook " + k)];
       return `<tr><td style="white-space:nowrap">${d.toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" })}<div class="petit">${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}${multi ? " · " + esc(s.machine) : ""}</div></td>`
         + `<td>${esc(s.titre)}<div class="petit" title="${esc(s.dossier)}">${esc(s.dossier)}</div></td><td>${esc(s.depot || "—")}<div class="petit">${esc(s.depot && s.branche || "")}</div></td>`
-        + `<td style="white-space:nowrap">${esc(modele(l.principal))}</td><td class="n" title="${esc(SERIES.map(x => x.nom + " : " + l.v[x.i].toLocaleString("fr-FR")).join("\n"))}">${nb(mesure(l.v))}</td><td class="n">${nb(l.v[1])}</td>`
+        + `<td style="white-space:nowrap">${esc(modele(l.principal))}</td><td class="n" title="${esc(SERIES.map(x => x.nom + " : " + l.v[x.i].toLocaleString("fr-FR")).join("\n"))}">${nb(tok(l.v))}</td><td class="n">${eur(cout(l.v))}</td>`
         + `<td>${etiq.map(e => `<span class="etiq">${esc(e)}</span>`).join("") || '<span class="petit">—</span>'}</td></tr>`; }).join("") + "</tbody>";
   $("plus").hidden = lignes.length <= etat.limite;
   $("sessions").querySelectorAll("th button").forEach(b => b.addEventListener("click", () => {
@@ -311,18 +338,22 @@ function rendre() {
   const jours = Object.keys(r.jours).length, depots = Object.keys(r.depots).filter(k => k !== "(hors dépôt)").length;
   const tuiles = [
     ["Sessions", r.lignes.length.toLocaleString("fr-FR"), jours + " jour" + (jours > 1 ? "s" : "") + " d'activité"],
-    ["Tokens", nb(mesure(r.tot)), etat.cache ? "cache lu compris" : "hors lecture de cache"],
-    ["Tokens de sortie", nb(r.tot[1]), "générés par le modèle"],
+    ["Coût estimé", eur(cout(r.tot)), "au tarif public de l'API"],
+    ["Tokens", nb(tok(r.tot)), etat.cache ? "cache lu compris" : "hors lecture de cache"],
+    ["Tokens de sortie", nb(r.tot[1]), eur(r.tot[5]) + " du coût"],
     ["Entrée servie par le cache", e ? Math.round(r.tot[2] / e * 100) + " %" : "—", nb(r.tot[2]) + " tokens relus"],
-    ["Dépôts", depots.toLocaleString("fr-FR"), Object.keys(r.dossiers).length + " dossier(s) de travail"],
-    ["Skills et agents", Object.keys(r.skills).length + " · " + Object.keys(r.agents).length, "skills distincts · types d'agents"]];
+    ["Dépôts", depots.toLocaleString("fr-FR"), Object.keys(r.dossiers).length + " dossier(s) de travail"]];
+  $("cache").hidden = !!etat.unite;
+  document.querySelectorAll(".u").forEach(x => { x.textContent = etat.unite ? "Coût estimé" : "Tokens"; });
+  $("note-tarifs").textContent = "Coût : estimation au tarif public de l'API Anthropic" + (T.releve_le ? " relevé le " + T.releve_le : "") + ", 1 € = " + (T.usd_par_eur || 1).toLocaleString("fr-FR", { maximumFractionDigits: 4 }) + " $ ; un abonnement Claude n'est pas facturé au token."
+    + (inconnus.size ? " Tarif inconnu, compté à 0 € : " + [...inconnus].join(", ") + "." : "");
   $("tuiles").innerHTML = tuiles.map(t => `<div class="tuile"><div class="lib">${t[0]}</div><div class="val">${t[1]}</div><div class="note">${t[2]}</div></div>`).join("");
-  $("sous-jours").textContent = (etat.periode ? "Les " + etat.periode + " derniers jours" : "Tout l'historique") + (etat.poste ? " · " + etat.poste : D.postes.length > 1 ? " · tous les postes" : "") + " · " + (etat.cache ? "cache lu compris" : "hors lecture de cache");
+  $("sous-jours").textContent = (etat.periode ? "Les " + etat.periode + " derniers jours" : "Tout l'historique") + (etat.poste ? " · " + etat.poste : D.postes.length > 1 ? " · tous les postes" : "") + " · " + (etat.unite ? "estimation au tarif public de l'API" : etat.cache ? "cache lu compris" : "hors lecture de cache");
   graphe(r);
   liste("modeles", parTokens(r.modeles).map(i => ({ ...i, libelle: modele(i.nom) })));
   liste("depots", parTokens(r.depots));
   liste("dossiers", parTokens(r.dossiers).map(i => ({ ...i, libelle: court(i.nom) })));
-  liste("skills", Object.keys(r.skills).map(k => ({ nom: k, val: Math.max(mesure(r.skills[k].v), 1), aux: r.skills[k].n ? "chargé ×" + r.skills[k].n : "via commande",
+  liste("skills", Object.keys(r.skills).map(k => ({ nom: k, val: Math.max(mesure(r.skills[k].v), etat.unite ? 1e-4 : 1), f: fv, aux: r.skills[k].n ? "chargé ×" + r.skills[k].n : "via commande",
     bulle: `<div class="rang"><span>Chargements par le modèle</span><span>${r.skills[k].n}</span></div>` + rangs(r.skills[k].v) })));
   liste("agents", parAppels(r.agents, "Lancements"));
   liste("commandes", parAppels(r.commandes, "Utilisations"));

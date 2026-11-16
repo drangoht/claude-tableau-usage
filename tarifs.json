@@ -1,0 +1,25 @@
+{
+  "_note": "Tarifs publics de l'API Anthropic en dollars par million de tokens. Pour les modifier sans toucher au dépôt, copiez ce fichier dans ~/.claude/tableau-usage/tarifs.json : il a priorité. Le modèle est reconnu par le plus long préfixe.",
+  "releve_le": "2026-11-16",
+  "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "usd_par_eur": 1.1014,
+  "taux_du": "2026-11-16 (taux de référence BCE)",
+  "cache_ecrit_5m_x_entree": 1.25,
+  "cache_ecrit_1h_x_entree": 2,
+  "modeles": {
+    "claude-fable-5-2": { "entree": 8, "sortie": 40, "cache_lu": 0.2 },
+    "claude-mythos-5-2": { "entree": 8, "sortie": 40, "cache_lu": 0.2 },
+    "claude-fable-5-1": { "entree": 10, "sortie": 50, "cache_lu": 0.25 },
+    "claude-mythos-5-1": { "entree": 10, "sortie": 50, "cache_lu": 0.25 },
+    "claude-fable-5": { "entree": 10, "sortie": 50, "cache_lu": 1 },
+    "claude-mythos-5": { "entree": 10, "sortie": 50, "cache_lu": 1 },
+    "claude-opus-5-5": { "entree": 4, "sortie": 20, "cache_lu": 0.2 },
+    "claude-opus-5": { "entree": 5, "sortie": 25, "cache_lu": 0.5 },
+    "claude-opus-4": { "entree": 5, "sortie": 25, "cache_lu": 0.5 },
+    "claude-sonnet-5-5": { "entree": 2, "sortie": 10, "cache_lu": 0.1 },
+    "claude-sonnet-5": { "entree": 2, "sortie": 10, "cache_lu": 0.2 },
+    "claude-sonnet-4": { "entree": 3, "sortie": 15, "cache_lu": 0.3 },
+    "claude-haiku-5-5": { "entree": 0.1, "sortie": 0.5, "cache_lu": 0.01 },
+    "claude-haiku-4-5": { "entree": 1, "sortie": 5, "cache_lu": 0.1 }
+  }
+}

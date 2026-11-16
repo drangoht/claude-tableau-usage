@@ -15,7 +15,7 @@ La collecte est faite par un script (aucun token) ; voici sa sortie :
 
 ## Quoi répondre
 
-- Sans question dans `$ARGUMENTS` : recopie les trois lignes ci-dessus (sessions, tokens, chemin de la page) et dis
+- Sans question dans `$ARGUMENTS` : recopie les lignes ci-dessus (sessions, tokens, coût estimé, chemin de la page) et dis
   que la page est ouverte dans le navigateur. Rien d'autre : pas d'analyse, pas de lecture de fichier.
 - Si la sortie contient « ECHEC » ou une erreur Python : relance une fois
   `python "${CLAUDE_SKILL_DIR}/scripts/collecte.py"` avec Bash et rapporte l'erreur telle quelle.
@@ -26,9 +26,11 @@ La collecte est faite par un script (aucun token) ; voici sa sortie :
 ## Format des données (pour les questions)
 
 `donnees-<machine>.json` : `{machine, genere, sessions: [...], journal, hooks_configures}`. Chaque session :
-`id, titre, debut, fin, dossier, depot, branche, tok, jm, skills, tok_skills, agents, tok_agents, outils, hooks,
-commandes, invites, messages`. Les vecteurs de tokens sont `[entrée, sortie, cache lu, cache écrit]` ; `jm` les
-ventile par clé `"AAAA-MM-JJ|modèle"`.
+`id, titre, debut, fin, dossier, depot, branche, tok, cout_eur, jm, skills, tok_skills, agents, tok_agents, outils,
+hooks, commandes, invites, messages`. Les vecteurs de tokens sont `[entrée, sortie, cache lu, cache écrit, dont cache
+écrit pour 1 h]` ; `jm` les ventile par clé `"AAAA-MM-JJ|modèle"`, `tok_skills` et `tok_agents` par clé `"nom|modèle"`.
+`cout_eur` est le coût estimé de la session au tarif public de l'API (tarifs dans `tarifs.json`) ; précise toujours
+que c'est une estimation, pas une facture.
 
 ## Autres commandes
 

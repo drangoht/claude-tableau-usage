@@ -34,7 +34,7 @@ RACINE = os.path.join(CLAUDE, "tableau-usage")
 CACHE = os.path.join(RACINE, "cache.json")
 VERROU = os.path.join(RACINE, "collecte.verrou")
 GABARIT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gabarit.html")
-VERSION_CACHE = 3
+VERSION_CACHE = 4
 MACHINE = socket.gethostname()
 
 MARQUEURS = ('"type":"assistant"', '"type":"user"', '"type":"attachment"', '"type":"system"',
@@ -53,10 +53,34 @@ def jour_local(ts):
         return (ts or "")[:10]
 
 
+N = 5  # vecteur de tokens : [entrée, sortie, cache lu, cache écrit, dont cache écrit pour 1 h]
+
+
 def ajouter(dico, cle, vec):
-    cible = dico.setdefault(cle, [0, 0, 0, 0])
-    for i in range(4):
+    cible = dico.setdefault(cle, [0] * N)
+    for i in range(N):
         cible[i] += vec[i]
+
+
+def charger_tarifs():
+    """Tarifs par modèle : ~/.claude/tableau-usage/tarifs.json s'il existe, sinon celui du skill."""
+    for chemin in (os.path.join(RACINE, "tarifs.json"),
+                   os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tarifs.json")):
+        t = lire_json(chemin, None)
+        if isinstance(t, dict) and isinstance(t.get("modeles"), dict):
+            return t
+    return {"modeles": {}, "usd_par_eur": 1}
+
+
+def cout_eur(tarifs, modele, vec):
+    """Coût estimé en euros d'un vecteur de tokens, au tarif public de l'API (0 si le modèle est inconnu)."""
+    prefixes = [p for p in tarifs["modeles"] if modele.startswith(p)]
+    if not prefixes:
+        return 0.0
+    p = tarifs["modeles"][max(prefixes, key=len)]
+    ecrit = (vec[3] - vec[4]) * tarifs.get("cache_ecrit_5m_x_entree", 1.25) + vec[4] * tarifs.get("cache_ecrit_1h_x_entree", 2)
+    usd = (vec[0] * p["entree"] + vec[1] * p["sortie"] + vec[2] * p["cache_lu"] + ecrit * p["entree"]) / 1e6
+    return usd / (tarifs.get("usd_par_eur") or 1)
 
 
 def texte_utilisateur(contenu):
@@ -113,16 +137,18 @@ def analyser(chemin, sous_agent):
                 modele = msg.get("model")
                 if isinstance(u, dict) and modele and modele != "<synthetic>":
                     cle = msg.get("id") or d.get("uuid")
+                    detail = u.get("cache_creation") if isinstance(u.get("cache_creation"), dict) else {}
                     vec = [u.get("input_tokens") or 0, u.get("output_tokens") or 0,
-                           u.get("cache_read_input_tokens") or 0, u.get("cache_creation_input_tokens") or 0]
+                           u.get("cache_read_input_tokens") or 0, u.get("cache_creation_input_tokens") or 0,
+                           detail.get("ephemeral_1h_input_tokens") or 0]
                     m = messages.get(cle)
                     if m is None:
                         messages[cle] = [modele, jour_local(ts)] + vec + [d.get("attributionSkill"), d.get("attributionAgent")]
                     else:  # même message réparti sur plusieurs lignes : on garde le maximum
-                        for i in range(4):
+                        for i in range(N):
                             m[2 + i] = max(m[2 + i], vec[i])
-                        m[6] = m[6] or d.get("attributionSkill")
-                        m[7] = m[7] or d.get("attributionAgent")
+                        m[2 + N] = m[2 + N] or d.get("attributionSkill")
+                        m[3 + N] = m[3 + N] or d.get("attributionAgent")
                 for b in msg.get("content") or []:
                     if not (isinstance(b, dict) and b.get("type") == "tool_use"):
                         continue
@@ -157,15 +183,15 @@ def analyser(chemin, sous_agent):
                     hooks["Stop (interne à l'app)" if c == "callback" else "Stop : " + c[:60]] += 1
 
     modeles, jours, jm, par_skill, par_agent = {}, {}, {}, {}, {}
-    for modele, jour, e, s, cl, ce, skill, agent in messages.values():
-        vec = [e, s, cl, ce]
+    for m in messages.values():
+        modele, jour, vec, skill, agent = m[0], m[1], m[2:2 + N], m[2 + N], m[3 + N]
         ajouter(modeles, modele, vec)
         ajouter(jours, jour, vec)
         ajouter(jm, jour + "|" + modele, vec)
-        if skill:
-            ajouter(par_skill, skill, vec)
+        if skill:  # clé « nom|modèle » : le modèle sert à chiffrer le coût
+            ajouter(par_skill, skill + "|" + modele, vec)
         if agent:
-            ajouter(par_agent, agent, vec)
+            ajouter(par_agent, agent + "|" + modele, vec)
     r.update(modeles=modeles, jours=jours, jm=jm, par_skill=par_skill, par_agent=par_agent,
              messages=len(messages), outils=dict(outils), skills=dict(skills), agents=dict(agents),
              hooks=dict(hooks), commandes=dict(commandes),
@@ -233,10 +259,14 @@ def ecrire(chemin, texte):
     os.replace(tmp, chemin)
 
 
-def sessions_locales(complet):
+def sessions_locales(complet, tarifs):
     cache = lire_json(CACHE, {})
-    if cache.get("v") != VERSION_CACHE or complet:
-        cache = {"v": VERSION_CACHE, "fichiers": {}, "depots": cache.get("depots", {}) if not complet else {}}
+    if cache.get("v") != VERSION_CACHE:
+        cache = {"v": VERSION_CACHE, "fichiers": {}, "depots": cache.get("depots", {})}
+    if complet:  # tout relire, sans perdre les sessions dont le transcript a déjà été purgé
+        for f in cache["fichiers"].values():
+            f["mt"] = -1
+        cache["depots"] = {}
     fichiers, relus = cache["fichiers"], 0
     for chemin in glob.glob(os.path.join(PROJETS, "*", "*.jsonl")) + \
             glob.glob(os.path.join(PROJETS, "*", "*", "subagents", "*.jsonl")):
@@ -269,9 +299,9 @@ def sessions_locales(complet):
             continue
         s = cible[1]
         fusionner(s, r)
-        tot = s.setdefault("sous_agents", [0, 0, 0, 0])
+        tot = s.setdefault("sous_agents", [0] * N)
         for v in r.get("modeles", {}).values():
-            for i in range(4):
+            for i in range(N):
                 tot[i] += v[i]
 
     depots, sortie = cache.setdefault("depots", {}), []
@@ -283,9 +313,9 @@ def sessions_locales(complet):
             depots[dossier] = depot_de(dossier) if os.path.isdir(dossier) else None
         dep = depots.get(dossier) if dossier else None
         sans_dossier = bool(dossier) and "scratch-workspaces" in dossier
-        tok = [0, 0, 0, 0]
+        tok = [0] * N
         for v in r["modeles"].values():
-            for i in range(4):
+            for i in range(N):
                 tok[i] += v[i]
         sortie.append({
             "id": sid, "machine": MACHINE,
@@ -294,7 +324,8 @@ def sessions_locales(complet):
             "dossier": "(sans dossier)" if sans_dossier else (dossier or projet),
             "depot": None if sans_dossier else (dep or {}).get("nom"),
             "branche": r.get("branche"), "entree": r.get("entree"), "version": r.get("version"),
-            "tok": tok, "jm": r["jm"],  # jm : « jour|modèle » -> [entrée, sortie, cache lu, cache écrit]
+            "tok": tok, "jm": r["jm"],  # jm : « jour|modèle » -> vecteur de tokens (voir N)
+            "cout_eur": round(sum(cout_eur(tarifs, k.split("|", 1)[1], v) for k, v in r["jm"].items()), 4),
             "skills": r["skills"], "tok_skills": r["par_skill"],
             "agents": r["agents"], "tok_agents": r["par_agent"], "sous_agents": r.get("sous_agents"),
             "outils": r["outils"], "hooks": r["hooks"], "commandes": r["commandes"],
@@ -350,9 +381,10 @@ def main():
         pass
     open(VERROU, "w").close()
     try:
-        sessions, relus = sessions_locales(a.complet)
+        tarifs = charger_tarifs()
+        sessions, relus = sessions_locales(a.complet, tarifs)
         genere = time.strftime("%Y-%m-%dT%H:%M:%S")
-        local = {"machine": MACHINE, "genere": genere, "sessions": sessions,
+        local = {"machine": MACHINE, "genere": genere, "sessions": sessions, "tarifs": tarifs,
                  "journal": journal_local(), "hooks_configures": hooks_configures()}
         ecrire(os.path.join(RACINE, "donnees-%s.json" % MACHINE),
                json.dumps(local, ensure_ascii=False, separators=(",", ":")))
@@ -363,7 +395,7 @@ def main():
             if isinstance(autre, dict) and autre.get("machine") and autre["machine"] != MACHINE \
                     and isinstance(autre.get("sessions"), list):
                 postes.append(autre)
-        donnees = json.dumps({"genere": genere, "postes": postes}, ensure_ascii=False,
+        donnees = json.dumps({"genere": genere, "tarifs": tarifs, "postes": postes}, ensure_ascii=False,
                              separators=(",", ":")).replace("</", "<\\/").replace("<!--", "<\\u0021--")
         with open(GABARIT, encoding="utf-8") as f:
             page = f.read().replace("__DONNEES__", donnees)
@@ -380,6 +412,8 @@ def main():
         print("Tableau à jour : %d sessions sur %s (%d transcripts relus), %d poste(s)." %
               (len(sessions), MACHINE, relus, len(postes)))
         print("Tokens : entrée %d, sortie %d, cache écrit %d, cache lu %d." % (tok[0], tok[1], tok[3], tok[2]))
+        print("Coût estimé au tarif public de l'API : %.2f € (indicatif ; un abonnement n'est pas facturé au token)." %
+              sum(s["cout_eur"] for s in sessions))
         print("Page : " + tableau)
     if a.ouvrir:
         import webbrowser
